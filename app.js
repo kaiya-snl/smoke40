@@ -650,6 +650,7 @@
   function renderSettings() {
     const el = document.getElementById("view-settings");
     const s = state.data.settings;
+    const todayKey = dateKey(new Date());
     const dowOptions = DOW_LABELS.map((label, i) => `<option value="${i}" ${s.weekStart === i ? "selected" : ""}>${label}曜日</option>`).join("");
 
     el.innerHTML = `
@@ -712,6 +713,13 @@
           </div>
           <input type="number" id="set-baselinePerDay" min="0" max="99" value="${s.baselinePerDay}">
         </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">記録開始日</div>
+            <div class="field-desc">統計タブの「累計」の起点</div>
+          </div>
+          <input type="date" id="set-trackingStartDate" value="${state.data.trackingStartDate}" max="${todayKey}">
+        </div>
       </div>
     `;
 
@@ -737,6 +745,14 @@
 
     document.getElementById("set-weekStart").addEventListener("change", (e) => {
       state.data.settings.weekStart = parseInt(e.target.value, 10);
+      saveData();
+      showToast("保存しました");
+      renderCurrentView();
+    });
+
+    document.getElementById("set-trackingStartDate").addEventListener("change", (e) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) return; // 未入力・不正値は無視する
+      state.data.trackingStartDate = e.target.value;
       saveData();
       showToast("保存しました");
       renderCurrentView();
