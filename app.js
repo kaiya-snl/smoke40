@@ -183,6 +183,7 @@
     currentView: "home",
     calendarMonth: startOfDay(new Date()), // 表示中の月（1日固定）
     dayDetailDate: null, // 日別詳細で開いている日付（nullなら非表示）
+    reductionAmount: 10, // 統計タブの削減シミュレーション用（週あたり本数、保存はしない）
   };
 
   // ---------------------------------------------------------
@@ -217,13 +218,33 @@
     return diffDays + 1; // 週開始日を1日目として数える
   }
 
+  function pricePerCigarette(settings) {
+    return settings.packSize > 0 ? settings.packPrice / settings.packSize : 0;
+  }
+
   // 「以前のペース（基準本数/日）」との比較で節約本数・節約金額を計算する
   function calcSavings(days, actualCount, settings) {
-    const pricePerCig = settings.packSize > 0 ? settings.packPrice / settings.packSize : 0;
+    const pricePerCig = pricePerCigarette(settings);
     const baselineCount = settings.baselinePerDay * days;
     const savedCount = baselineCount - actualCount; // 基準を上回った場合は負の値のまま返す（実態を隠さない方針）
     const savedAmount = Math.round(savedCount * pricePerCig);
     return { baselineCount, savedCount, savedAmount };
+  }
+
+  // 節約シミュレーション用の期間セット（概算日数）
+  const PROJECTION_PERIODS = [
+    { label: "1ヶ月", days: 30 },
+    { label: "半年", days: 183 },
+    { label: "1年", days: 365 },
+    { label: "5年", days: 365 * 5 },
+    { label: "10年", days: 365 * 10 },
+  ];
+
+  function formatInterval(ms) {
+    const totalMin = Math.floor(ms / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return h > 0 ? `${h}時間${m}分` : `${m}分`;
   }
 
   function daysElapsedInMonth(now) {
@@ -286,6 +307,11 @@
       ? `<div class="cig-dots">${"🚬".repeat(todayCount)}</div>`
       : `<div class="empty-note">まだ記録がありません</div>`;
 
+    const lastRecordTs = records.length > 0 ? records[records.length - 1] : null;
+    const intervalHtml = lastRecordTs
+      ? `<div class="interval-note">前回から ${formatInterval(now.getTime() - lastRecordTs)}</div>`
+      : "";
+
     const weekDays = daysElapsedInWeek(now, settings.weekStart);
     const savings = calcSavings(weekDays, weekCount, settings);
     const savingsAmountHtml = savings.savedCount >= 0
@@ -311,6 +337,7 @@
           <span class="today-target ${todayOver ? "over" : ""}">目安 ${todayTarget}本${todayOver ? "（超過）" : ""}</span>
         </div>
         <div class="today-date">${todayLabel}</div>
+        ${intervalHtml}
         ${dots}
       </div>
 
@@ -350,10 +377,17 @@
   }
 
   function showMindfulCheck(onProceed) {
+    const records = state.data.records;
+    const lastTs = records.length > 0 ? records[records.length - 1] : null;
+    const intervalHtml = lastTs
+      ? `<div class="mindful-interval">前回から ${formatInterval(Date.now() - lastTs)}</div>`
+      : "";
+
     const dialog = document.getElementById("mindful-dialog");
     dialog.innerHTML = `
       <div class="mindful-icon">🤔</div>
       <div class="mindful-question">今、本当に吸いたい？</div>
+      ${intervalHtml}
       <div class="mindful-sub">食後・コーヒーの後など、"なんとなく"の1本になっていませんか？</div>
       <button class="plus-btn" id="mindful-yes">吸いたい</button>
       <button class="undo-btn" id="mindful-no">やめておく</button>
@@ -540,6 +574,22 @@
     const [sy, sm, sd] = state.data.trackingStartDate.split("-").map(Number);
     const startLabel = `${sy}年${sm}月${sd}日`;
 
+    // 今の週間目標を続けた場合の長期節約シミュレーション
+    const pricePerCig = pricePerCigarette(settings);
+    const targetDailyRate = settings.weeklyLimit / 7;
+    const dailySavingsAtGoal = (settings.baselinePerDay - targetDailyRate) * pricePerCig;
+    const projectionRows = PROJECTION_PERIODS.map((p) =>
+      `<tr><td>${p.label}</td><td>${formatSavingsAmount(Math.round(dailySavingsAtGoal * p.days))}</td></tr>`
+    ).join("");
+
+    // 週の目標をさらに減らした場合の追加節約シミュレーション
+    const reduction = state.reductionAmount;
+    const extraDailySavings = (reduction / 7) * pricePerCig;
+    const reducedTarget = Math.max(0, settings.weeklyLimit - reduction);
+    const reductionRows = PROJECTION_PERIODS.map((p) =>
+      `<tr><td>${p.label}</td><td>${formatSavingsAmount(Math.round(extraDailySavings * p.days))}</td></tr>`
+    ).join("");
+
     el.innerHTML = `
       <div class="section-title">本数と節約金額</div>
       <div class="card">
@@ -557,7 +607,41 @@
           記録開始日: ${startLabel}〜（${totalDays}日間）／ 比較基準: 以前は1日${settings.baselinePerDay}本のペース
         </div>
       </div>
+
+      <div class="section-title">今の目標（週${settings.weeklyLimit}本）を続けたら</div>
+      <div class="card">
+        <table class="stats-table">
+          <thead><tr><th>期間</th><th>節約金額（概算）</th></tr></thead>
+          <tbody>${projectionRows}</tbody>
+        </table>
+        <div class="stats-note">週${settings.weeklyLimit}本ペース（1日${targetDailyRate.toFixed(1)}本）と、以前の1日${settings.baselinePerDay}本を比較した概算です（1ヶ月=30日, 1年=365日換算）</div>
+      </div>
+
+      <div class="section-title">目標をさらに減らしたら</div>
+      <div class="card">
+        <div class="field-row">
+          <div>
+            <div class="field-label">週の目標を</div>
+            <div class="field-desc">本減らすと、追加でいくら節約できるか</div>
+          </div>
+          <input type="number" id="stats-reduction" min="0" max="99" value="${reduction}">
+        </div>
+        <table class="stats-table">
+          <thead><tr><th>期間</th><th>追加の節約金額</th></tr></thead>
+          <tbody>${reductionRows}</tbody>
+        </table>
+        <div class="stats-note">週${settings.weeklyLimit}本 → 週${reducedTarget}本にした場合に、上の「今の目標を続けたら」に追加でどれだけ節約できるかの概算です</div>
+      </div>
     `;
+
+    document.getElementById("stats-reduction").addEventListener("change", (e) => {
+      let v = parseInt(e.target.value, 10);
+      if (!Number.isFinite(v) || v < 0) v = 0;
+      if (v > 99) v = 99;
+      e.target.value = v;
+      state.reductionAmount = v;
+      renderStats();
+    });
   }
 
   // ---------------------------------------------------------

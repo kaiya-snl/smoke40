@@ -3,7 +3,7 @@
    オフラインでも起動できるよう、アプリ本体一式をキャッシュする
    ========================================================== */
 
-const CACHE_NAME = "smoke40-cache-v3";
+const CACHE_NAME = "smoke40-cache-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -33,22 +33,20 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// ネットワーク優先: オンライン時は常に最新を取得し、取得できた分だけキャッシュを更新する。
+// オフライン時のみキャッシュへフォールバックする（cache-firstだと更新後も古い画面が残り続けるため）。
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
-        .then((response) => {
-          if (response && response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached); // オフライン時はキャッシュへフォールバック
-
-      return cached || network;
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response && response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
