@@ -354,8 +354,13 @@
     if (!undoBtn.disabled) undoBtn.addEventListener("click", handleUndo);
   }
 
-  function handleAddOne() {
-    state.data.records.push(Date.now());
+  // forDateを指定すると、その日の正午の記録として追加する（過去日の記録を後から追加する用途）
+  function handleAddOne(forDate) {
+    const ts = forDate
+      ? new Date(forDate.getFullYear(), forDate.getMonth(), forDate.getDate(), 12, 0, 0).getTime()
+      : Date.now();
+    state.data.records.push(ts);
+    state.data.records.sort((a, b) => a - b); // 過去日への追加でも時系列順を保つ（取り消し機能が最後の1件を前提にしているため）
     saveData();
     renderCurrentView();
     showToast("1本記録しました");
@@ -364,12 +369,13 @@
   const MINDFUL_CHECK_PROBABILITY = 0.3; // ＋1本のうちランダムでこの割合だけ「本当に吸いたいか」を確認する
 
   // ＋1本の実行前にランダムで一服前チェックを挟む。afterAddは記録後に実行したい追加処理（画面再描画など）
-  function requestAddOne(afterAdd) {
+  // forDateがある場合（過去日への追加）は「今吸いたいか」を問う意味がないためチェックを省略する
+  function requestAddOne(afterAdd, forDate) {
     const proceed = () => {
-      handleAddOne();
+      handleAddOne(forDate);
       if (afterAdd) afterAdd();
     };
-    if (Math.random() < MINDFUL_CHECK_PROBABILITY) {
+    if (!forDate && Math.random() < MINDFUL_CHECK_PROBABILITY) {
       showMindfulCheck(proceed);
     } else {
       proceed();
@@ -408,9 +414,24 @@
     document.getElementById("mindful-overlay").classList.remove("open");
   }
 
-  function handleUndo() {
-    if (state.data.records.length === 0) return;
-    state.data.records.pop();
+  // forDateを指定すると、その日の記録の中で最後の1件だけを取り消す（他の日の記録には影響しない）
+  function handleUndo(forDate) {
+    if (forDate) {
+      const dayStart = startOfDay(forDate).getTime();
+      const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+      let targetIndex = -1;
+      for (let i = state.data.records.length - 1; i >= 0; i--) {
+        if (state.data.records[i] >= dayStart && state.data.records[i] < dayEnd) {
+          targetIndex = i;
+          break;
+        }
+      }
+      if (targetIndex === -1) return;
+      state.data.records.splice(targetIndex, 1);
+    } else {
+      if (state.data.records.length === 0) return;
+      state.data.records.pop();
+    }
     saveData();
     renderCurrentView();
     showToast("直前の記録を取り消しました");
@@ -510,6 +531,7 @@
     const date = new Date(y, m - 1, d);
     const today = startOfDay(new Date());
     const isToday = date.getTime() === today.getTime();
+    const isFuture = date.getTime() > today.getTime();
 
     const records = recordsOnDay(date).slice().sort((a, b) => a - b);
     const holidayName = getHolidayName(date);
@@ -528,26 +550,23 @@
       <div class="sheet-sub">${holidayName ? holidayName + " ・ " : ""}目安 ${target}本</div>
       <div class="sheet-total">合計 ${records.length}本</div>
       ${list}
-      ${isToday ? `<button class="plus-btn" id="sheet-add-one">＋ 1本</button>` : ""}
-      ${isToday && records.length > 0 ? `<button class="undo-btn" id="sheet-undo">最後の1本を取り消す</button>` : ""}
+      ${isFuture ? "" : `<button class="plus-btn" id="sheet-add-one">＋ 1本${isToday ? "" : "（この日に追加）"}</button>`}
+      ${records.length > 0 ? `<button class="undo-btn" id="sheet-undo">最後の1本を取り消す</button>` : ""}
     `;
 
     document.getElementById("sheet-close-btn").addEventListener("click", closeDayDetail);
-    if (isToday) {
-      document.getElementById("sheet-add-one").addEventListener("click", () => {
-        requestAddOne(() => renderDayDetail());
+    const addBtn = document.getElementById("sheet-add-one");
+    if (addBtn) {
+      addBtn.addEventListener("click", () => {
+        requestAddOne(() => renderDayDetail(), isToday ? undefined : date);
       });
-      const undoBtn = document.getElementById("sheet-undo");
-      if (undoBtn) {
-        undoBtn.addEventListener("click", () => {
-          handleUndo();
-          if (recordsOnDay(date).length === 0) {
-            renderDayDetail();
-          } else {
-            renderDayDetail();
-          }
-        });
-      }
+    }
+    const undoBtn = document.getElementById("sheet-undo");
+    if (undoBtn) {
+      undoBtn.addEventListener("click", () => {
+        handleUndo(isToday ? undefined : date);
+        renderDayDetail();
+      });
     }
   }
 
