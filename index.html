@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SMOKE - 喫煙本数管理</title>
+
+<!-- PWA設定: iPhoneのホーム画面に追加した際にアプリらしく動作させるための設定 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SMOKE">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <header class="app-header">
+    <span class="app-header-icon">🚬</span>
+    <span class="app-header-title" id="app-header-title">SMOKE</span>
+  </header>
+
+  <main id="app-main">
+    <section id="view-home" class="view"></section>
+    <section id="view-calendar" class="view"></section>
+    <section id="view-settings" class="view"></section>
+  </main>
+
+  <nav class="bottom-nav">
+    <button class="nav-btn" data-view="home">
+      <span class="nav-icon">🏠</span><span>ホーム</span>
+    </button>
+    <button class="nav-btn" data-view="calendar">
+      <span class="nav-icon">📅</span><span>カレンダー</span>
+    </button>
+    <button class="nav-btn" data-view="settings">
+      <span class="nav-icon">⚙️</span><span>設定</span>
+    </button>
+  </nav>
+
+  <div id="day-detail-overlay" class="day-detail-overlay">
+    <div class="day-detail-backdrop" id="day-detail-backdrop"></div>
+    <div class="day-detail-sheet" id="day-detail-sheet"></div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+</div>
+
+<script src="app.js" defer></script>
+</body>
+</html>
