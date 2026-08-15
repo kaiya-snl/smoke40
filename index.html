@@ -29,6 +29,7 @@
   <main id="app-main">
     <section id="view-home" class="view"></section>
     <section id="view-calendar" class="view"></section>
+    <section id="view-stats" class="view"></section>
     <section id="view-settings" class="view"></section>
   </main>
 
@@ -39,6 +40,9 @@
     <button class="nav-btn" data-view="calendar">
       <span class="nav-icon">📅</span><span>カレンダー</span>
     </button>
+    <button class="nav-btn" data-view="stats">
+      <span class="nav-icon">📊</span><span>統計</span>
+    </button>
     <button class="nav-btn" data-view="settings">
       <span class="nav-icon">⚙️</span><span>設定</span>
     </button>
@@ -47,6 +51,11 @@
   <div id="day-detail-overlay" class="day-detail-overlay">
     <div class="day-detail-backdrop" id="day-detail-backdrop"></div>
     <div class="day-detail-sheet" id="day-detail-sheet"></div>
+  </div>
+
+  <div id="mindful-overlay" class="mindful-overlay">
+    <div class="mindful-backdrop" id="mindful-backdrop"></div>
+    <div class="mindful-dialog" id="mindful-dialog"></div>
   </div>
 
   <div id="toast" class="toast"></div>

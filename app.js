@@ -16,6 +16,7 @@
   function defaultData() {
     return {
       records: [], // 喫煙1本ごとの記録時刻（epoch ms）の配列。昇順で追加していく
+      trackingStartDate: dateKey(new Date()), // 記録開始日（累計集計の起点）"YYYY-MM-DD"
       settings: {
         weeklyLimit: 40,   // 週間上限本数
         weekdayTarget: 5,  // 平日の目安本数
@@ -35,8 +36,14 @@
       const parsed = JSON.parse(raw);
       const def = defaultData();
       if (!parsed || !Array.isArray(parsed.records)) return def;
+      const records = parsed.records.filter((v) => typeof v === "number" && Number.isFinite(v));
+      // 記録開始日が未保存の場合、最初の記録の日付から補完する（既存ユーザーの累計集計がズレないように）
+      const trackingStartDate = typeof parsed.trackingStartDate === "string"
+        ? parsed.trackingStartDate
+        : (records.length > 0 ? dateKey(new Date(Math.min(...records))) : def.trackingStartDate);
       return {
-        records: parsed.records.filter((v) => typeof v === "number" && Number.isFinite(v)),
+        records,
+        trackingStartDate,
         settings: Object.assign({}, def.settings, parsed.settings || {}),
       };
     } catch (e) {
@@ -191,6 +198,12 @@
     return recordsInRange(s, e);
   }
 
+  function recordsInMonth(date) {
+    const s = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+    const e = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
+    return recordsInRange(s, e);
+  }
+
   function weekLimitState(count, limit) {
     if (count > limit) return "danger";
     if (count === limit) return "danger";
@@ -211,6 +224,24 @@
     const savedCount = baselineCount - actualCount; // 基準を上回った場合は負の値のまま返す（実態を隠さない方針）
     const savedAmount = Math.round(savedCount * pricePerCig);
     return { baselineCount, savedCount, savedAmount };
+  }
+
+  function daysElapsedInMonth(now) {
+    return now.getDate(); // 例: 8/15なら「今月15日経過」
+  }
+
+  // 指定日("YYYY-MM-DD")から今日までの経過日数（開始日を1日目として数える）
+  function daysElapsedSince(dateKeyStr, now) {
+    const [y, m, d] = dateKeyStr.split("-").map(Number);
+    const start = new Date(y, m - 1, d);
+    const diffDays = Math.floor((startOfDay(now) - start) / 86400000);
+    return Math.max(1, diffDays + 1);
+  }
+
+  function formatSavingsAmount(amount) {
+    return amount >= 0
+      ? `<span class="savings-positive">¥${amount.toLocaleString()}</span>`
+      : `<span class="savings-negative">-¥${Math.abs(amount).toLocaleString()}</span>`;
   }
 
   // ---------------------------------------------------------
@@ -291,7 +322,7 @@
       </div>
     `;
 
-    document.getElementById("btn-add-one").addEventListener("click", handleAddOne);
+    document.getElementById("btn-add-one").addEventListener("click", () => requestAddOne());
     const undoBtn = document.getElementById("btn-undo");
     if (!undoBtn.disabled) undoBtn.addEventListener("click", handleUndo);
   }
@@ -301,6 +332,46 @@
     saveData();
     renderCurrentView();
     showToast("1本記録しました");
+  }
+
+  const MINDFUL_CHECK_PROBABILITY = 0.3; // ＋1本のうちランダムでこの割合だけ「本当に吸いたいか」を確認する
+
+  // ＋1本の実行前にランダムで一服前チェックを挟む。afterAddは記録後に実行したい追加処理（画面再描画など）
+  function requestAddOne(afterAdd) {
+    const proceed = () => {
+      handleAddOne();
+      if (afterAdd) afterAdd();
+    };
+    if (Math.random() < MINDFUL_CHECK_PROBABILITY) {
+      showMindfulCheck(proceed);
+    } else {
+      proceed();
+    }
+  }
+
+  function showMindfulCheck(onProceed) {
+    const dialog = document.getElementById("mindful-dialog");
+    dialog.innerHTML = `
+      <div class="mindful-icon">🤔</div>
+      <div class="mindful-question">今、本当に吸いたい？</div>
+      <div class="mindful-sub">食後・コーヒーの後など、"なんとなく"の1本になっていませんか？</div>
+      <button class="plus-btn" id="mindful-yes">吸いたい</button>
+      <button class="undo-btn" id="mindful-no">やめておく</button>
+    `;
+    document.getElementById("mindful-overlay").classList.add("open");
+
+    document.getElementById("mindful-yes").addEventListener("click", () => {
+      closeMindfulCheck();
+      onProceed();
+    });
+    document.getElementById("mindful-no").addEventListener("click", () => {
+      closeMindfulCheck();
+      showToast("👍 いい選択です");
+    });
+  }
+
+  function closeMindfulCheck() {
+    document.getElementById("mindful-overlay").classList.remove("open");
   }
 
   function handleUndo() {
@@ -430,8 +501,7 @@
     document.getElementById("sheet-close-btn").addEventListener("click", closeDayDetail);
     if (isToday) {
       document.getElementById("sheet-add-one").addEventListener("click", () => {
-        handleAddOne();
-        renderDayDetail();
+        requestAddOne(() => renderDayDetail());
       });
       const undoBtn = document.getElementById("sheet-undo");
       if (undoBtn) {
@@ -445,6 +515,49 @@
         });
       }
     }
+  }
+
+  // ---------------------------------------------------------
+  // レンダリング: 統計（今週・今月・累計）
+  // ---------------------------------------------------------
+  function renderStats() {
+    const el = document.getElementById("view-stats");
+    const now = new Date();
+    const { settings } = state.data;
+
+    const weekStart = getWeekStart(now, settings.weekStart);
+    const weekEnd = getWeekEnd(now, settings.weekStart);
+    const weekCount = recordsInRange(weekStart.getTime(), weekEnd.getTime()).length;
+    const weekSavings = calcSavings(daysElapsedInWeek(now, settings.weekStart), weekCount, settings);
+
+    const monthCount = recordsInMonth(now).length;
+    const monthSavings = calcSavings(daysElapsedInMonth(now), monthCount, settings);
+
+    const totalCount = state.data.records.length;
+    const totalDays = daysElapsedSince(state.data.trackingStartDate, now);
+    const totalSavings = calcSavings(totalDays, totalCount, settings);
+
+    const [sy, sm, sd] = state.data.trackingStartDate.split("-").map(Number);
+    const startLabel = `${sy}年${sm}月${sd}日`;
+
+    el.innerHTML = `
+      <div class="section-title">本数と節約金額</div>
+      <div class="card">
+        <table class="stats-table">
+          <thead>
+            <tr><th>期間</th><th>本数</th><th>節約金額</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>今週</td><td>${weekCount}本</td><td>${formatSavingsAmount(weekSavings.savedAmount)}</td></tr>
+            <tr><td>今月</td><td>${monthCount}本</td><td>${formatSavingsAmount(monthSavings.savedAmount)}</td></tr>
+            <tr><td>累計</td><td>${totalCount}本</td><td>${formatSavingsAmount(totalSavings.savedAmount)}</td></tr>
+          </tbody>
+        </table>
+        <div class="stats-note">
+          記録開始日: ${startLabel}〜（${totalDays}日間）／ 比較基準: 以前は1日${settings.baselinePerDay}本のペース
+        </div>
+      </div>
+    `;
   }
 
   // ---------------------------------------------------------
@@ -552,6 +665,7 @@
   function renderCurrentView() {
     if (state.currentView === "home") renderHome();
     else if (state.currentView === "calendar") renderCalendar();
+    else if (state.currentView === "stats") renderStats();
     else if (state.currentView === "settings") renderSettings();
     if (state.dayDetailDate) renderDayDetail();
   }
@@ -583,6 +697,7 @@
       btn.addEventListener("click", () => switchView(btn.getAttribute("data-view")));
     });
     document.getElementById("day-detail-backdrop").addEventListener("click", closeDayDetail);
+    document.getElementById("mindful-backdrop").addEventListener("click", closeMindfulCheck);
 
     // アプリをバックグラウンドから復帰した際に日付/週またぎを反映する
     document.addEventListener("visibilitychange", () => {

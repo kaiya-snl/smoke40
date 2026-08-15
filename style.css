@@ -177,6 +177,61 @@ button { font-family: inherit; }
 .savings-amount.positive { color: var(--accent-strong); }
 .savings-amount.negative { color: var(--warning); }
 
+/* ---------- 統計テーブル ---------- */
+.stats-table { width: 100%; border-collapse: collapse; }
+.stats-table th, .stats-table td {
+  padding: 10px 4px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.95rem;
+}
+.stats-table th:first-child, .stats-table td:first-child { text-align: left; }
+.stats-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.78rem;
+}
+.stats-table tr:last-child td { border-bottom: none; }
+.savings-positive { color: var(--accent-strong); font-weight: 700; }
+.savings-negative { color: var(--warning); font-weight: 700; }
+.stats-note {
+  margin-top: 14px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ---------- 一服前チェック ---------- */
+.mindful-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.mindful-overlay.open { display: flex; }
+.mindful-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+.mindful-dialog {
+  position: relative;
+  width: calc(100% - 56px);
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 30px 22px 22px;
+  text-align: center;
+}
+.mindful-icon { font-size: 2.4rem; margin-bottom: 10px; }
+.mindful-question { font-size: 1.2rem; font-weight: 700; margin-bottom: 8px; }
+.mindful-sub { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 22px; line-height: 1.5; }
+.mindful-dialog .plus-btn { margin: 0 0 10px; }
+.mindful-dialog .undo-btn { margin: 0; }
+
 /* ---------- カレンダー ---------- */
 .cal-header {
   display: flex;
