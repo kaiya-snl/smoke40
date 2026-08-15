@@ -156,6 +156,27 @@ button { font-family: inherit; }
 .cig-dots { font-size: 1.3rem; line-height: 1.9; letter-spacing: 2px; word-break: break-all; }
 .empty-note { color: var(--text-muted); font-size: 0.88rem; }
 
+/* ---------- 節約カード ---------- */
+.savings-title { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px; }
+.savings-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.92rem;
+  padding: 4px 0;
+  color: var(--text-muted);
+}
+.savings-amount {
+  margin-top: 10px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.savings-amount.positive { color: var(--accent-strong); }
+.savings-amount.negative { color: var(--warning); }
+
 /* ---------- カレンダー ---------- */
 .cal-header {
   display: flex;

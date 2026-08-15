@@ -21,6 +21,9 @@
         weekdayTarget: 5,  // 平日の目安本数
         weekendTarget: 10, // 土日祝の目安本数
         weekStart: 1,      // 週の開始曜日 0=日,1=月,...6=土
+        packSize: 20,        // 1箱の本数
+        packPrice: 550,      // 1箱の価格（円）
+        baselinePerDay: 20,  // 節約計算の基準本数（以前は1日何本吸っていたか）
       },
     };
   }
@@ -195,6 +198,21 @@
     return "normal";
   }
 
+  function daysElapsedInWeek(now, weekStart) {
+    const start = getWeekStart(now, weekStart);
+    const diffDays = Math.floor((startOfDay(now) - start) / 86400000);
+    return diffDays + 1; // 週開始日を1日目として数える
+  }
+
+  // 「以前のペース（基準本数/日）」との比較で節約本数・節約金額を計算する
+  function calcSavings(days, actualCount, settings) {
+    const pricePerCig = settings.packSize > 0 ? settings.packPrice / settings.packSize : 0;
+    const baselineCount = settings.baselinePerDay * days;
+    const savedCount = baselineCount - actualCount; // 基準を上回った場合は負の値のまま返す（実態を隠さない方針）
+    const savedAmount = Math.round(savedCount * pricePerCig);
+    return { baselineCount, savedCount, savedAmount };
+  }
+
   // ---------------------------------------------------------
   // レンダリング: ホーム
   // ---------------------------------------------------------
@@ -237,6 +255,12 @@
       ? `<div class="cig-dots">${"🚬".repeat(todayCount)}</div>`
       : `<div class="empty-note">まだ記録がありません</div>`;
 
+    const weekDays = daysElapsedInWeek(now, settings.weekStart);
+    const savings = calcSavings(weekDays, weekCount, settings);
+    const savingsAmountHtml = savings.savedCount >= 0
+      ? `<div class="savings-amount positive">節約 ${savings.savedCount}本 ・ ¥${savings.savedAmount.toLocaleString()}</div>`
+      : `<div class="savings-amount negative">基準より ${Math.abs(savings.savedCount)}本多い ・ ¥${Math.abs(savings.savedAmount).toLocaleString()}多い計算</div>`;
+
     el.innerHTML = `
       <div class="card limit-card">
         ${badge}
@@ -257,6 +281,13 @@
         </div>
         <div class="today-date">${todayLabel}</div>
         ${dots}
+      </div>
+
+      <div class="card savings-card">
+        <div class="savings-title">今週の節約（1日${settings.baselinePerDay}本吸っていた場合と比較）</div>
+        <div class="savings-row"><span>以前のペースなら</span><span>${savings.baselineCount}本</span></div>
+        <div class="savings-row"><span>実際</span><span>${weekCount}本</span></div>
+        ${savingsAmountHtml}
       </div>
     `;
 
@@ -460,6 +491,31 @@
           <select id="set-weekStart">${dowOptions}</select>
         </div>
       </div>
+
+      <div class="section-title">節約計算の基準</div>
+      <div class="card settings-form">
+        <div class="field-row">
+          <div>
+            <div class="field-label">1箱の本数</div>
+            <div class="field-desc">タバコ1箱に入っている本数</div>
+          </div>
+          <input type="number" id="set-packSize" min="1" max="99" value="${s.packSize}">
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">1箱の価格</div>
+            <div class="field-desc">円</div>
+          </div>
+          <input type="number" id="set-packPrice" min="0" max="9999" value="${s.packPrice}">
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">以前の1日の本数</div>
+            <div class="field-desc">節約額の比較基準（例: 毎日1箱なら1箱の本数と同じ値に）</div>
+          </div>
+          <input type="number" id="set-baselinePerDay" min="0" max="99" value="${s.baselinePerDay}">
+        </div>
+      </div>
     `;
 
     const bindNumber = (id, key, min, max) => {
@@ -478,6 +534,9 @@
     bindNumber("set-weeklyLimit", "weeklyLimit", 1, 999);
     bindNumber("set-weekdayTarget", "weekdayTarget", 0, 99);
     bindNumber("set-weekendTarget", "weekendTarget", 0, 99);
+    bindNumber("set-packSize", "packSize", 1, 99);
+    bindNumber("set-packPrice", "packPrice", 0, 9999);
+    bindNumber("set-baselinePerDay", "baselinePerDay", 0, 99);
 
     document.getElementById("set-weekStart").addEventListener("change", (e) => {
       state.data.settings.weekStart = parseInt(e.target.value, 10);
