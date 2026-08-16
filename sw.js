@@ -3,7 +3,7 @@
    オフラインでも起動できるよう、アプリ本体一式をキャッシュする
    ========================================================== */
 
-const CACHE_NAME = "smoke40-cache-v4";
+const CACHE_NAME = "smoke40-cache-v5";
 const APP_SHELL = [
   "./",
   "./index.html",

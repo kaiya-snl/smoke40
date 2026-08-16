@@ -242,9 +242,14 @@
 
   function formatInterval(ms) {
     const totalMin = Math.floor(ms / 60000);
-    const h = Math.floor(totalMin / 60);
+    const totalHours = Math.floor(totalMin / 60);
     const m = totalMin % 60;
-    return h > 0 ? `${h}時間${m}分` : `${m}分`;
+    if (totalHours >= 24) {
+      const days = Math.floor(totalHours / 24);
+      const h = totalHours % 24;
+      return `${days}日${h}時間`;
+    }
+    return totalHours > 0 ? `${totalHours}時間${m}分` : `${m}分`;
   }
 
   function daysElapsedInMonth(now) {
@@ -573,6 +578,116 @@
   // ---------------------------------------------------------
   // レンダリング: 統計（今週・今月・累計）
   // ---------------------------------------------------------
+  // 記録の並び（時系列昇順）から、連続する喫煙同士の間隔(時間)の配列を作る
+  function computeIntervalGaps() {
+    const records = state.data.records;
+    const gaps = [];
+    for (let i = 1; i < records.length; i++) {
+      gaps.push({ ts: records[i], hours: (records[i] - records[i - 1]) / 3600000 });
+    }
+    return gaps;
+  }
+
+  // 日ごとの平均間隔（直近maxDays日分。データが少なければあるだけ返す）
+  function averageIntervalByDay(gaps, maxDays) {
+    const byDay = new Map();
+    for (const g of gaps) {
+      const key = dateKey(new Date(g.ts));
+      const entry = byDay.get(key) || { sum: 0, count: 0 };
+      entry.sum += g.hours;
+      entry.count += 1;
+      byDay.set(key, entry);
+    }
+    const rows = Array.from(byDay.entries())
+      .map(([key, { sum, count }]) => ({ key, label: key.slice(5).replace("-", "/"), avg: sum / count }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+    return rows.slice(-maxDays);
+  }
+
+  // 月ごとの平均間隔と、各月末時点までの累計平均（徐々に均される推移）
+  function monthlyAndCumulativeInterval(gaps) {
+    const byMonth = new Map();
+    for (const g of gaps) {
+      const d = new Date(g.ts);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const entry = byMonth.get(key) || { sum: 0, count: 0 };
+      entry.sum += g.hours;
+      entry.count += 1;
+      byMonth.set(key, entry);
+    }
+    const months = Array.from(byMonth.entries())
+      .map(([key, { sum, count }]) => ({ key, label: `${Number(key.slice(5))}月`, avg: sum / count }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+
+    const sortedGaps = gaps.slice().sort((a, b) => a.ts - b.ts);
+    let idx = 0;
+    let runSum = 0;
+    let runCount = 0;
+    const cumulative = months.map((m) => {
+      const [y, mo] = m.key.split("-").map(Number);
+      const monthEnd = new Date(y, mo, 1).getTime();
+      while (idx < sortedGaps.length && sortedGaps[idx].ts < monthEnd) {
+        runSum += sortedGaps[idx].hours;
+        runCount += 1;
+        idx += 1;
+      }
+      return { key: m.key, label: m.label, avg: runCount > 0 ? runSum / runCount : 0 };
+    });
+
+    return { months, cumulative };
+  }
+
+  // 棒グラフ（＋任意で折れ線を重ねる）のSVGを生成する。barsとlineは同じlabel列を想定
+  function buildBarLineChart(bars, line, opts) {
+    const width = Math.max(320, bars.length * 34 + 60);
+    const height = 160;
+    const padding = { top: 14, right: 14, bottom: 26, left: 34 };
+    const innerW = width - padding.left - padding.right;
+    const innerH = height - padding.top - padding.bottom;
+
+    if (bars.length === 0) {
+      return { svg: "", width };
+    }
+
+    const allValues = bars.map((b) => b.avg).concat(line ? line.map((l) => l.avg) : []);
+    const maxVal = Math.max(1, ...allValues) * 1.15;
+    const n = bars.length;
+    const band = innerW / n;
+    const barW = Math.max(6, Math.min(28, band * 0.55));
+
+    const xCenter = (i) => padding.left + band * i + band / 2;
+    const yScale = (v) => padding.top + innerH - (v / maxVal) * innerH;
+
+    const barsSvg = bars.map((b, i) => {
+      const barH = (b.avg / maxVal) * innerH;
+      const x = xCenter(i) - barW / 2;
+      const y = padding.top + innerH - barH;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, barH).toFixed(1)}" rx="3" class="chart-bar"><title>${b.label}: 平均${b.avg.toFixed(1)}時間</title></rect>`;
+    }).join("");
+
+    let lineSvg = "";
+    if (line && line.length > 0) {
+      const points = line.map((l, i) => `${xCenter(i).toFixed(1)},${yScale(l.avg).toFixed(1)}`).join(" ");
+      const dots = line.map((l, i) => `<circle cx="${xCenter(i).toFixed(1)}" cy="${yScale(l.avg).toFixed(1)}" r="3" class="chart-line-dot"><title>${l.label}: 累計平均${l.avg.toFixed(1)}時間</title></circle>`).join("");
+      lineSvg = `<polyline points="${points}" class="chart-line" fill="none" />${dots}`;
+    }
+
+    const gridLines = [0, 0.5, 1].map((f) => {
+      const v = maxVal * f;
+      const y = yScale(v);
+      return `<line x1="${padding.left}" y1="${y.toFixed(1)}" x2="${width - padding.right}" y2="${y.toFixed(1)}" class="chart-grid" /><text x="${(padding.left - 6).toFixed(1)}" y="${y.toFixed(1)}" class="chart-axis-label" text-anchor="end" dominant-baseline="middle">${Math.round(v)}h</text>`;
+    }).join("");
+
+    const labelStep = Math.max(1, Math.ceil(n / 8));
+    const xLabels = bars.map((b, i) => {
+      if (i % labelStep !== 0 && i !== n - 1) return "";
+      return `<text x="${xCenter(i).toFixed(1)}" y="${height - 8}" class="chart-axis-label" text-anchor="middle">${b.label}</text>`;
+    }).join("");
+
+    const svg = `<svg viewBox="0 0 ${width} ${height}" class="interval-chart" role="img" aria-label="${opts && opts.ariaLabel ? opts.ariaLabel : "推移グラフ"}">${gridLines}${barsSvg}${lineSvg}${xLabels}</svg>`;
+    return { svg, width };
+  }
+
   function renderStats() {
     const el = document.getElementById("view-stats");
     const now = new Date();
@@ -601,13 +716,34 @@
       `<tr><td>${p.label}</td><td>${formatSavingsAmount(Math.round(dailySavingsAtGoal * p.days))}</td></tr>`
     ).join("");
 
-    // 週の目標をさらに減らした場合の追加節約シミュレーション
+    // 週の目標をさらに減らした場合の節約シミュレーション（「今の目標」の節約額に上乗せした合計を表示する）
     const reduction = state.reductionAmount;
     const extraDailySavings = (reduction / 7) * pricePerCig;
+    const combinedDailySavings = dailySavingsAtGoal + extraDailySavings;
     const reducedTarget = Math.max(0, settings.weeklyLimit - reduction);
     const reductionRows = PROJECTION_PERIODS.map((p) =>
-      `<tr><td>${p.label}</td><td>${formatSavingsAmount(Math.round(extraDailySavings * p.days))}</td></tr>`
+      `<tr><td>${p.label}</td><td>${formatSavingsAmount(Math.round(combinedDailySavings * p.days))}</td></tr>`
     ).join("");
+
+    // 喫煙間隔の推移グラフ（日別・月別＋累計）
+    const gaps = computeIntervalGaps();
+    const dailyIntervalRows = averageIntervalByDay(gaps, 30);
+    const { months: monthlyIntervalRows, cumulative: cumulativeIntervalRows } = monthlyAndCumulativeInterval(gaps);
+
+    const dailyChart = buildBarLineChart(dailyIntervalRows, null, { ariaLabel: "日別の平均喫煙間隔" });
+    const monthlyChart = buildBarLineChart(monthlyIntervalRows, cumulativeIntervalRows, { ariaLabel: "月別の平均喫煙間隔と累計推移" });
+
+    const dailyChartHtml = dailyChart.svg
+      ? `<div class="chart-scroll"><div style="width:${dailyChart.width}px">${dailyChart.svg}</div></div>`
+      : `<p class="empty-note">2本以上記録された日がまだありません</p>`;
+
+    const monthlyChartHtml = monthlyChart.svg
+      ? `<div class="chart-scroll"><div style="width:${monthlyChart.width}px">${monthlyChart.svg}</div></div>
+         <div class="chart-legend">
+           <span><span class="legend-swatch" style="background:var(--accent-strong)"></span>その月の平均</span>
+           <span><span class="legend-swatch" style="background:var(--warning)"></span>累計の平均（推移）</span>
+         </div>`
+      : `<p class="empty-note">2本以上記録された月がまだありません</p>`;
 
     el.innerHTML = `
       <div class="section-title">本数と節約金額</div>
@@ -641,15 +777,27 @@
         <div class="field-row">
           <div>
             <div class="field-label">週の目標を</div>
-            <div class="field-desc">本減らすと、追加でいくら節約できるか</div>
+            <div class="field-desc">本減らしたら、節約金額はいくらになるか</div>
           </div>
           <input type="number" id="stats-reduction" min="0" max="99" value="${reduction}">
         </div>
         <table class="stats-table">
-          <thead><tr><th>期間</th><th>追加の節約金額</th></tr></thead>
+          <thead><tr><th>期間</th><th>節約金額（概算）</th></tr></thead>
           <tbody>${reductionRows}</tbody>
         </table>
-        <div class="stats-note">週${settings.weeklyLimit}本 → 週${reducedTarget}本にした場合に、上の「今の目標を続けたら」に追加でどれだけ節約できるかの概算です</div>
+        <div class="stats-note">週${settings.weeklyLimit}本 → 週${reducedTarget}本にした場合の節約金額です（「今の目標を続けたら」に、この削減分を上乗せした合計）</div>
+      </div>
+
+      <div class="section-title">喫煙間隔の推移（日別）</div>
+      <div class="card">
+        ${dailyChartHtml}
+        <div class="stats-note">1本吸ってから次の1本までの平均時間です。直近${dailyIntervalRows.length}日分（2本以上記録された日のみ）</div>
+      </div>
+
+      <div class="section-title">喫煙間隔の推移（月別・累計）</div>
+      <div class="card">
+        ${monthlyChartHtml}
+        <div class="stats-note">棒＝その月の平均間隔、線＝記録開始からその月末までの累計平均間隔です</div>
       </div>
     `;
 
