@@ -25,6 +25,9 @@
         packSize: 20,        // 1箱の本数
         packPrice: 550,      // 1箱の価格（円）
         baselinePerDay: 20,  // 節約計算の基準本数（以前は1日何本吸っていたか）
+        morningTarget: 2,    // 午前(0-12時)の目安本数
+        afternoonTarget: 2,  // 午後(12-18時)の目安本数
+        eveningTarget: 2,    // 夜(18-24時、仕事終わり後)の目安本数
       },
     };
   }
@@ -205,6 +208,55 @@
     return recordsInRange(s, e);
   }
 
+  // 1日を3つの時間帯に分け、指定した時刻がどの時間帯かを返す
+  const DAY_PERIODS = [
+    { key: "morning", label: "午前", startHour: 0, endHour: 12, settingsKey: "morningTarget" },
+    { key: "afternoon", label: "午後", startHour: 12, endHour: 18, settingsKey: "afternoonTarget" },
+    { key: "evening", label: "夜", startHour: 18, endHour: 24, settingsKey: "eveningTarget" },
+  ];
+
+  function getCurrentPeriod(date) {
+    const h = date.getHours();
+    return DAY_PERIODS.find((p) => h >= p.startHour && h < p.endHour) || DAY_PERIODS[DAY_PERIODS.length - 1];
+  }
+
+  function recordsInPeriod(date, period) {
+    const dayStart = startOfDay(date).getTime();
+    const s = dayStart + period.startHour * 3600000;
+    const e = dayStart + period.endHour * 3600000;
+    return recordsInRange(s, e);
+  }
+
+  // 1日の合計本数を午前/午後/夜の3つになるべく均等に振り分ける（余りは午前から順に+1）
+  function distributeDailyTotal(dailyTotal) {
+    const base = Math.floor(dailyTotal / 3);
+    let remainder = dailyTotal - base * 3;
+    const parts = [base, base, base];
+    let i = 0;
+    while (remainder > 0) {
+      parts[i] += 1;
+      i = (i + 1) % 3;
+      remainder -= 1;
+    }
+    return { morning: parts[0], afternoon: parts[1], evening: parts[2] };
+  }
+
+  // 週間上限 ⇔ 時間帯別目安(午前+午後+夜) を常に一致させる（週間上限=1日の目安合計×7）
+  function syncPeriodsFromWeekly() {
+    const s = state.data.settings;
+    const daily = Math.max(0, Math.round(s.weeklyLimit / 7));
+    const { morning, afternoon, evening } = distributeDailyTotal(daily);
+    s.morningTarget = morning;
+    s.afternoonTarget = afternoon;
+    s.eveningTarget = evening;
+    s.weeklyLimit = daily * 7; // 7の倍数に達成可能な値としてスナップする
+  }
+
+  function syncWeeklyFromPeriods() {
+    const s = state.data.settings;
+    s.weeklyLimit = (s.morningTarget + s.afternoonTarget + s.eveningTarget) * 7;
+  }
+
   function weekLimitState(count, limit) {
     if (count > limit) return "danger";
     if (count === limit) return "danger";
@@ -317,6 +369,33 @@
       ? `<div class="interval-note">前回から ${formatInterval(now.getTime() - lastRecordTs)}</div>`
       : "";
 
+    // 今日の平均喫煙間隔（同日内の連続する記録同士の間隔の平均）
+    const todayGaps = [];
+    for (let i = 1; i < todayRecords.length; i++) {
+      todayGaps.push(todayRecords[i] - todayRecords[i - 1]);
+    }
+    const todayAvgIntervalHtml = todayGaps.length > 0
+      ? `<div class="interval-note">今日の平均間隔 ${formatInterval(todayGaps.reduce((a, b) => a + b, 0) / todayGaps.length)}</div>`
+      : "";
+
+    // 現在の時間帯（午前/午後/夜）の消化状況
+    const period = getCurrentPeriod(now);
+    const periodCount = recordsInPeriod(now, period).length;
+    const periodTarget = settings[period.settingsKey];
+    const periodRemaining = periodTarget - periodCount;
+    const periodOver = periodCount > periodTarget;
+    const periodHtml = `
+      <div class="card period-card ${periodOver ? "over" : ""}">
+        <div class="period-row">
+          <span class="period-label">${period.label}（${period.endHour}時まで）</span>
+          <span class="period-count">${periodCount} / ${periodTarget}本</span>
+        </div>
+        <div class="period-remaining ${periodOver ? "over" : ""}">
+          ${periodOver ? `⚠️ ${period.endHour}時までに +${periodCount - periodTarget}本 超過` : `${period.endHour}時まで残り ${periodRemaining}本`}
+        </div>
+      </div>
+    `;
+
     const weekDays = daysElapsedInWeek(now, settings.weekStart);
     const savings = calcSavings(weekDays, weekCount, settings);
     const savingsAmountHtml = savings.savedCount >= 0
@@ -336,6 +415,8 @@
       <button class="plus-btn" id="btn-add-one">＋ 1本</button>
       <button class="undo-btn" id="btn-undo" ${records.length === 0 ? "disabled" : ""}>最後の1本を取り消す</button>
 
+      ${periodHtml}
+
       <div class="card">
         <div class="today-head">
           <span class="today-count">今日 ${todayCount}本</span>
@@ -343,6 +424,7 @@
         </div>
         <div class="today-date">${todayLabel}</div>
         ${intervalHtml}
+        ${todayAvgIntervalHtml}
         ${dots}
       </div>
 
@@ -640,8 +722,8 @@
   // 棒グラフ（＋任意で折れ線を重ねる）のSVGを生成する。barsとlineは同じlabel列を想定
   function buildBarLineChart(bars, line, opts) {
     const width = Math.max(320, bars.length * 34 + 60);
-    const height = 160;
-    const padding = { top: 14, right: 14, bottom: 26, left: 34 };
+    const height = 190;
+    const padding = { top: 34, right: 14, bottom: 26, left: 34 };
     const innerW = width - padding.left - padding.right;
     const innerH = height - padding.top - padding.bottom;
 
@@ -657,18 +739,23 @@
 
     const xCenter = (i) => padding.left + band * i + band / 2;
     const yScale = (v) => padding.top + innerH - (v / maxVal) * innerH;
+    const fmt = (v) => (v >= 10 ? Math.round(v).toString() : v.toFixed(1));
 
     const barsSvg = bars.map((b, i) => {
       const barH = (b.avg / maxVal) * innerH;
       const x = xCenter(i) - barW / 2;
       const y = padding.top + innerH - barH;
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, barH).toFixed(1)}" rx="3" class="chart-bar"><title>${b.label}: 平均${b.avg.toFixed(1)}時間</title></rect>`;
+      const labelY = Math.max(padding.top - 6, y - 6);
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, barH).toFixed(1)}" rx="3" class="chart-bar"><title>${b.label}: 平均${b.avg.toFixed(1)}時間</title></rect><text x="${xCenter(i).toFixed(1)}" y="${labelY.toFixed(1)}" class="chart-value-label" text-anchor="middle">${fmt(b.avg)}</text>`;
     }).join("");
 
     let lineSvg = "";
     if (line && line.length > 0) {
       const points = line.map((l, i) => `${xCenter(i).toFixed(1)},${yScale(l.avg).toFixed(1)}`).join(" ");
-      const dots = line.map((l, i) => `<circle cx="${xCenter(i).toFixed(1)}" cy="${yScale(l.avg).toFixed(1)}" r="3" class="chart-line-dot"><title>${l.label}: 累計平均${l.avg.toFixed(1)}時間</title></circle>`).join("");
+      const dots = line.map((l, i) => {
+        const cy = yScale(l.avg);
+        return `<circle cx="${xCenter(i).toFixed(1)}" cy="${cy.toFixed(1)}" r="3" class="chart-line-dot"><title>${l.label}: 累計平均${l.avg.toFixed(1)}時間</title></circle><text x="${xCenter(i).toFixed(1)}" y="${(cy + 14).toFixed(1)}" class="chart-value-label line">${fmt(l.avg)}</text>`;
+      }).join("");
       lineSvg = `<polyline points="${points}" class="chart-line" fill="none" />${dots}`;
     }
 
@@ -704,6 +791,12 @@
     const totalCount = state.data.records.length;
     const totalDays = daysElapsedSince(state.data.trackingStartDate, now);
     const totalSavings = calcSavings(totalDays, totalCount, settings);
+
+    // 実際の出費（1本あたりの単価 × 本数）
+    const pricePerCigForSpend = pricePerCigarette(settings);
+    const weekSpend = Math.round(weekCount * pricePerCigForSpend);
+    const monthSpend = Math.round(monthCount * pricePerCigForSpend);
+    const totalSpend = Math.round(totalCount * pricePerCigForSpend);
 
     const [sy, sm, sd] = state.data.trackingStartDate.split("-").map(Number);
     const startLabel = `${sy}年${sm}月${sd}日`;
@@ -750,16 +843,16 @@
       <div class="card">
         <table class="stats-table">
           <thead>
-            <tr><th>期間</th><th>本数</th><th>節約金額</th></tr>
+            <tr><th>期間</th><th>本数</th><th>実際の出費</th><th>節約金額</th></tr>
           </thead>
           <tbody>
-            <tr><td>今週</td><td>${weekCount}本</td><td>${formatSavingsAmount(weekSavings.savedAmount)}</td></tr>
-            <tr><td>今月</td><td>${monthCount}本</td><td>${formatSavingsAmount(monthSavings.savedAmount)}</td></tr>
-            <tr><td>累計</td><td>${totalCount}本</td><td>${formatSavingsAmount(totalSavings.savedAmount)}</td></tr>
+            <tr><td>今週</td><td>${weekCount}本</td><td>¥${weekSpend.toLocaleString()}</td><td>${formatSavingsAmount(weekSavings.savedAmount)}</td></tr>
+            <tr><td>今月</td><td>${monthCount}本</td><td>¥${monthSpend.toLocaleString()}</td><td>${formatSavingsAmount(monthSavings.savedAmount)}</td></tr>
+            <tr><td>累計</td><td>${totalCount}本</td><td>¥${totalSpend.toLocaleString()}</td><td>${formatSavingsAmount(totalSavings.savedAmount)}</td></tr>
           </tbody>
         </table>
         <div class="stats-note">
-          記録開始日: ${startLabel}〜（${totalDays}日間）／ 比較基準: 以前は1日${settings.baselinePerDay}本のペース
+          記録開始日: ${startLabel}〜（${totalDays}日間）／ 1本あたり¥${pricePerCigForSpend.toFixed(1)}換算／ 比較基準: 以前は1日${settings.baselinePerDay}本のペース
         </div>
       </div>
 
@@ -826,7 +919,7 @@
         <div class="field-row">
           <div>
             <div class="field-label">週間上限</div>
-            <div class="field-desc">1週間で守りたい本数</div>
+            <div class="field-desc">1週間で守りたい本数（下の時間帯別の目安と自動で連動します）</div>
           </div>
           <input type="number" id="set-weeklyLimit" min="1" max="999" value="${s.weeklyLimit}">
         </div>
@@ -843,6 +936,29 @@
             <div class="field-desc">土日・日本の祝日の目安本数</div>
           </div>
           <input type="number" id="set-weekendTarget" min="0" max="99" value="${s.weekendTarget}">
+        </div>
+      </div>
+
+      <div class="section-title">時間帯別の目安</div>
+      <div class="card settings-form">
+        <div class="field-row">
+          <div>
+            <div class="field-label">午前（0時〜12時）</div>
+          </div>
+          <input type="number" id="set-morningTarget" min="0" max="99" value="${s.morningTarget}">
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">午後（12時〜18時）</div>
+          </div>
+          <input type="number" id="set-afternoonTarget" min="0" max="99" value="${s.afternoonTarget}">
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">夜（18時〜24時）</div>
+            <div class="field-desc">仕事終わり後など</div>
+          </div>
+          <input type="number" id="set-eveningTarget" min="0" max="99" value="${s.eveningTarget}">
         </div>
       </div>
 
@@ -903,12 +1019,38 @@
         renderCurrentView();
       });
     };
-    bindNumber("set-weeklyLimit", "weeklyLimit", 1, 999);
     bindNumber("set-weekdayTarget", "weekdayTarget", 0, 99);
     bindNumber("set-weekendTarget", "weekendTarget", 0, 99);
     bindNumber("set-packSize", "packSize", 1, 99);
     bindNumber("set-packPrice", "packPrice", 0, 9999);
     bindNumber("set-baselinePerDay", "baselinePerDay", 0, 99);
+
+    // 週間上限を編集したら、時間帯別目安(午前+午後+夜)を1日あたりに割り直す
+    document.getElementById("set-weeklyLimit").addEventListener("change", (e) => {
+      let v = parseInt(e.target.value, 10);
+      if (!Number.isFinite(v) || v < 1) v = 1;
+      if (v > 999) v = 999;
+      state.data.settings.weeklyLimit = v;
+      syncPeriodsFromWeekly();
+      saveData();
+      showToast("保存しました（時間帯別の目安も更新）");
+      renderCurrentView();
+    });
+
+    // 時間帯別目安を編集したら、週間上限を(午前+午後+夜)×7に合わせる
+    const periodFieldIds = { morningTarget: "set-morningTarget", afternoonTarget: "set-afternoonTarget", eveningTarget: "set-eveningTarget" };
+    Object.entries(periodFieldIds).forEach(([key, id]) => {
+      document.getElementById(id).addEventListener("change", (e) => {
+        let v = parseInt(e.target.value, 10);
+        if (!Number.isFinite(v) || v < 0) v = 0;
+        if (v > 99) v = 99;
+        state.data.settings[key] = v;
+        syncWeeklyFromPeriods();
+        saveData();
+        showToast("保存しました（週間上限も更新）");
+        renderCurrentView();
+      });
+    });
 
     document.getElementById("set-weekStart").addEventListener("change", (e) => {
       state.data.settings.weekStart = parseInt(e.target.value, 10);

@@ -142,6 +142,19 @@ button { font-family: inherit; }
 }
 .undo-btn:disabled { opacity: 0.35; text-decoration: none; }
 
+/* ---------- 時間帯カード ---------- */
+.period-card { padding: 14px 18px; }
+.period-card.over { border-color: var(--warning); }
+.period-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.period-label { font-size: 0.9rem; color: var(--text-muted); }
+.period-count { font-size: 1.05rem; font-weight: 700; }
+.period-remaining { margin-top: 4px; font-size: 0.95rem; font-weight: 700; color: var(--accent-strong); }
+.period-remaining.over { color: var(--warning); }
+
 /* ---------- 今日カード ---------- */
 .today-head {
   display: flex;
@@ -204,12 +217,14 @@ button { font-family: inherit; }
 
 /* ---------- 喫煙間隔グラフ ---------- */
 .chart-scroll { overflow-x: auto; }
-.interval-chart { display: block; height: 160px; }
+.interval-chart { display: block; height: 190px; }
 .chart-bar { fill: var(--accent-strong); }
 .chart-line { stroke: var(--warning); stroke-width: 2; }
 .chart-line-dot { fill: var(--warning); stroke: var(--surface); stroke-width: 1.5; }
 .chart-grid { stroke: var(--border); stroke-width: 1; }
 .chart-axis-label { fill: var(--text-muted); font-size: 9px; }
+.chart-value-label { fill: var(--accent-strong); font-size: 9px; font-weight: 700; }
+.chart-value-label.line { fill: var(--warning); }
 .chart-legend {
   margin-top: 10px;
   font-size: 0.75rem;
