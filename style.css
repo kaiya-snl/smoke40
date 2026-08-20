@@ -312,8 +312,8 @@ button { font-family: inherit; }
 .cal-cell.rest { background: var(--surface-2); }
 .cal-cell.today { border: 2px solid var(--accent); }
 .cal-cell .d-num { font-weight: 600; }
-.cal-cell .d-count { font-size: 0.72rem; color: var(--accent-strong); }
-.cal-cell.over-limit .d-count { color: var(--danger); }
+.cal-cell .d-periods { font-size: 0.62rem; color: var(--accent-strong); letter-spacing: -0.3px; }
+.cal-cell.over-limit .d-periods { color: var(--danger); }
 .cal-cell .d-dot { position: absolute; top: 4px; right: 6px; font-size: 0.55rem; color: var(--warning); }
 
 .cal-legend {

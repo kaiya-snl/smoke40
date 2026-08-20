@@ -573,6 +573,9 @@
     for (let d = 1; d <= daysInMonth; d++) {
       const date = new Date(year, mIdx, d);
       const count = recordsOnDay(date).length;
+      const mCount = recordsInPeriod(date, DAY_PERIODS[0]).length;
+      const aCount = recordsInPeriod(date, DAY_PERIODS[1]).length;
+      const eCount = recordsInPeriod(date, DAY_PERIODS[2]).length;
       const rest = isRestDay(date);
       const isToday = date.getTime() === today.getTime();
       const overLimit = count > (rest ? settings.weekendTarget : settings.weekdayTarget);
@@ -587,7 +590,7 @@
         <button class="${cls.join(" ")}" data-date="${dateKey(date)}" ${holidayName ? `title="${holidayName}"` : ""}>
           ${holidayName ? '<span class="d-dot">●</span>' : ""}
           <span class="d-num">${d}</span>
-          <span class="d-count">${count > 0 ? count + "本" : ""}</span>
+          <span class="d-periods">${count > 0 ? `${mCount}/${aCount}/${eCount}` : ""}</span>
         </button>
       `;
     }
@@ -606,6 +609,7 @@
         <span><span class="legend-swatch" style="background:var(--surface-2)"></span>土日・祝日</span>
         <span><span class="legend-swatch" style="background:var(--danger)"></span>目安超過</span>
         <span>● = 祝日</span>
+        <span>数字 = 午前/午後/夜</span>
       </div>
     `;
 
@@ -743,6 +747,31 @@
     return { months, cumulative };
   }
 
+  // 記録開始日以降について、午前/午後/夜それぞれの「1日あたり平均本数」を計算する
+  function periodDailyAverages(now) {
+    const [y, m, d] = state.data.trackingStartDate.split("-").map(Number);
+    const startTs = new Date(y, m - 1, d).getTime();
+    const days = daysElapsedSince(state.data.trackingStartDate, now);
+    const sums = { morning: 0, afternoon: 0, evening: 0 };
+    for (const ts of state.data.records) {
+      if (ts < startTs) continue;
+      const h = new Date(ts).getHours();
+      if (h < 12) sums.morning += 1;
+      else if (h < 18) sums.afternoon += 1;
+      else sums.evening += 1;
+    }
+    return DAY_PERIODS.map((p) => ({ label: p.label, avg: sums[p.key] / days }));
+  }
+
+  // 全記録を時刻(0〜23時)ごとに集計する
+  function hourlyDistribution() {
+    const counts = new Array(24).fill(0);
+    for (const ts of state.data.records) {
+      counts[new Date(ts).getHours()] += 1;
+    }
+    return counts.map((c, h) => ({ label: `${h}時`, avg: c }));
+  }
+
   // 棒グラフ（＋任意で折れ線を重ねる）のSVGを生成する。barsとlineは同じlabel列を想定
   function buildBarLineChart(bars, line, opts) {
     const width = Math.max(320, bars.length * 34 + 60);
@@ -763,14 +792,18 @@
 
     const xCenter = (i) => padding.left + band * i + band / 2;
     const yScale = (v) => padding.top + innerH - (v / maxVal) * innerH;
-    const fmt = (v) => (v >= 10 ? Math.round(v).toString() : v.toFixed(1));
+    const isCount = !!(opts && opts.integer);
+    const fmt = (v) => (isCount || v >= 10 ? Math.round(v).toString() : v.toFixed(1));
+    const tooltipUnit = isCount ? "本" : "時間";
+    const gridUnit = isCount ? "" : "h";
 
     const barsSvg = bars.map((b, i) => {
       const barH = (b.avg / maxVal) * innerH;
       const x = xCenter(i) - barW / 2;
       const y = padding.top + innerH - barH;
       const labelY = Math.max(padding.top - 6, y - 6);
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, barH).toFixed(1)}" rx="3" class="chart-bar"><title>${b.label}: 平均${b.avg.toFixed(1)}時間</title></rect><text x="${xCenter(i).toFixed(1)}" y="${labelY.toFixed(1)}" class="chart-value-label" text-anchor="middle">${fmt(b.avg)}</text>`;
+      const tip = isCount ? `${b.label}: ${fmt(b.avg)}${tooltipUnit}` : `${b.label}: 平均${b.avg.toFixed(1)}${tooltipUnit}`;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, barH).toFixed(1)}" rx="3" class="chart-bar"><title>${tip}</title></rect><text x="${xCenter(i).toFixed(1)}" y="${labelY.toFixed(1)}" class="chart-value-label" text-anchor="middle">${fmt(b.avg)}</text>`;
     }).join("");
 
     let lineSvg = "";
@@ -778,7 +811,7 @@
       const points = line.map((l, i) => `${xCenter(i).toFixed(1)},${yScale(l.avg).toFixed(1)}`).join(" ");
       const dots = line.map((l, i) => {
         const cy = yScale(l.avg);
-        return `<circle cx="${xCenter(i).toFixed(1)}" cy="${cy.toFixed(1)}" r="3" class="chart-line-dot"><title>${l.label}: 累計平均${l.avg.toFixed(1)}時間</title></circle><text x="${xCenter(i).toFixed(1)}" y="${(cy + 14).toFixed(1)}" class="chart-value-label line">${fmt(l.avg)}</text>`;
+        return `<circle cx="${xCenter(i).toFixed(1)}" cy="${cy.toFixed(1)}" r="3" class="chart-line-dot"><title>${l.label}: 累計平均${l.avg.toFixed(1)}${tooltipUnit}</title></circle><text x="${xCenter(i).toFixed(1)}" y="${(cy + 14).toFixed(1)}" class="chart-value-label line">${fmt(l.avg)}</text>`;
       }).join("");
       lineSvg = `<polyline points="${points}" class="chart-line" fill="none" />${dots}`;
     }
@@ -786,7 +819,7 @@
     const gridLines = [0, 0.5, 1].map((f) => {
       const v = maxVal * f;
       const y = yScale(v);
-      return `<line x1="${padding.left}" y1="${y.toFixed(1)}" x2="${width - padding.right}" y2="${y.toFixed(1)}" class="chart-grid" /><text x="${(padding.left - 6).toFixed(1)}" y="${y.toFixed(1)}" class="chart-axis-label" text-anchor="end" dominant-baseline="middle">${Math.round(v)}h</text>`;
+      return `<line x1="${padding.left}" y1="${y.toFixed(1)}" x2="${width - padding.right}" y2="${y.toFixed(1)}" class="chart-grid" /><text x="${(padding.left - 6).toFixed(1)}" y="${y.toFixed(1)}" class="chart-axis-label" text-anchor="end" dominant-baseline="middle">${Math.round(v)}${gridUnit}</text>`;
     }).join("");
 
     const labelStep = Math.max(1, Math.ceil(n / 8));
@@ -862,6 +895,23 @@
          </div>`
       : `<p class="empty-note">2本以上記録された月がまだありません</p>`;
 
+    // 時間帯別の1日あたり平均本数
+    const periodAvgRows = periodDailyAverages(now);
+    const periodAvgRowsHtml = periodAvgRows.map((p) => `<tr><td>${p.label}</td><td>${p.avg.toFixed(1)}本/日</td></tr>`).join("");
+
+    // 時刻(0〜23時)ごとの本数分布
+    const hourlyRows = hourlyDistribution();
+    const hourlyTotal = hourlyRows.reduce((s, h) => s + h.avg, 0);
+    const hourlyChart = buildBarLineChart(hourlyRows.map((h) => ({ label: h.label, avg: h.avg })), null, { ariaLabel: "時間帯ごとの本数分布", integer: true });
+    let peakHourNote = "まだ記録がありません";
+    if (hourlyTotal > 0) {
+      const peakHour = hourlyRows.reduce((best, h) => (h.avg > best.avg ? h : best), hourlyRows[0]);
+      peakHourNote = `最も多いのは${peakHour.label}台（${peakHour.avg}本）`;
+    }
+    const hourlyChartHtml = hourlyChart.svg
+      ? `<div class="chart-scroll"><div style="width:${hourlyChart.width}px">${hourlyChart.svg}</div></div>`
+      : `<p class="empty-note">まだ記録がありません</p>`;
+
     el.innerHTML = `
       <div class="section-title">本数と節約金額</div>
       <div class="card">
@@ -915,6 +965,21 @@
       <div class="card">
         ${monthlyChartHtml}
         <div class="stats-note">棒＝その月の平均間隔、線＝記録開始からその月末までの累計平均間隔です</div>
+      </div>
+
+      <div class="section-title">時間帯別の平均本数</div>
+      <div class="card">
+        <table class="stats-table">
+          <thead><tr><th>時間帯</th><th>1日あたり平均</th></tr></thead>
+          <tbody>${periodAvgRowsHtml}</tbody>
+        </table>
+        <div class="stats-note">記録開始日（${startLabel}）からの1日あたり平均本数です</div>
+      </div>
+
+      <div class="section-title">時刻ごとの本数分布</div>
+      <div class="card">
+        ${hourlyChartHtml}
+        <div class="stats-note">${peakHourNote}／記録開始日からの累計です</div>
       </div>
     `;
 
