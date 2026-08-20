@@ -748,19 +748,25 @@
   }
 
   // 記録開始日以降について、午前/午後/夜それぞれの「1日あたり平均本数」を計算する
+  // 前日までの完了した日だけを対象にする（当日はまだ途中なので平均が歪むため除外）
   function periodDailyAverages(now) {
     const [y, m, d] = state.data.trackingStartDate.split("-").map(Number);
     const startTs = new Date(y, m - 1, d).getTime();
-    const days = daysElapsedSince(state.data.trackingStartDate, now);
+    const todayStartTs = startOfDay(now).getTime();
+    const daysBeforeToday = Math.max(0, Math.round((todayStartTs - startTs) / 86400000));
+
     const sums = { morning: 0, afternoon: 0, evening: 0 };
     for (const ts of state.data.records) {
-      if (ts < startTs) continue;
+      if (ts < startTs || ts >= todayStartTs) continue; // 記録開始日より前・当日は除外
       const h = new Date(ts).getHours();
       if (h < 12) sums.morning += 1;
       else if (h < 18) sums.afternoon += 1;
       else sums.evening += 1;
     }
-    return DAY_PERIODS.map((p) => ({ label: p.label, avg: sums[p.key] / days }));
+    if (daysBeforeToday <= 0) {
+      return DAY_PERIODS.map((p) => ({ label: p.label, avg: null }));
+    }
+    return DAY_PERIODS.map((p) => ({ label: p.label, avg: sums[p.key] / daysBeforeToday }));
   }
 
   // 全記録を時刻(0〜23時)ごとに集計する
@@ -897,7 +903,7 @@
 
     // 時間帯別の1日あたり平均本数
     const periodAvgRows = periodDailyAverages(now);
-    const periodAvgRowsHtml = periodAvgRows.map((p) => `<tr><td>${p.label}</td><td>${p.avg.toFixed(1)}本/日</td></tr>`).join("");
+    const periodAvgRowsHtml = periodAvgRows.map((p) => `<tr><td>${p.label}</td><td>${p.avg === null ? "-" : p.avg.toFixed(1) + "本/日"}</td></tr>`).join("");
 
     // 時刻(0〜23時)ごとの本数分布
     const hourlyRows = hourlyDistribution();
@@ -973,7 +979,7 @@
           <thead><tr><th>時間帯</th><th>1日あたり平均</th></tr></thead>
           <tbody>${periodAvgRowsHtml}</tbody>
         </table>
-        <div class="stats-note">記録開始日（${startLabel}）からの1日あたり平均本数です</div>
+        <div class="stats-note">記録開始日（${startLabel}）〜前日までの1日あたり平均本数です（当日は集計中のため含みません）</div>
       </div>
 
       <div class="section-title">時刻ごとの本数分布</div>
