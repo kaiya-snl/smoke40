@@ -227,6 +227,30 @@
     return recordsInRange(s, e);
   }
 
+  // 記録開始日から現在までに「使ってよかった本数」の累計（時間帯の開始時刻ごとに目安が積み上がる）
+  function totalAllowanceSoFar(now, settings) {
+    const [y, m, d] = state.data.trackingStartDate.split("-").map(Number);
+    const startDate = new Date(y, m - 1, d);
+    const todayStart = startOfDay(now);
+    const daysBeforeToday = Math.max(0, Math.round((todayStart - startDate) / 86400000));
+    const dailyTotal = settings.morningTarget + settings.afternoonTarget + settings.eveningTarget;
+
+    let allowance = daysBeforeToday * dailyTotal;
+    const nowHour = now.getHours();
+    for (const p of DAY_PERIODS) {
+      if (nowHour >= p.startHour) allowance += settings[p.settingsKey];
+    }
+    return allowance;
+  }
+
+  // 貯金残高 = ここまでの目安の累計 − 記録開始日以降の実際の本数（プラスなら貯金、マイナスなら使いすぎ）
+  function bankBalance(now) {
+    const [y, m, d] = state.data.trackingStartDate.split("-").map(Number);
+    const startTs = new Date(y, m - 1, d).getTime();
+    const actual = state.data.records.filter((ts) => ts >= startTs).length;
+    return totalAllowanceSoFar(now, state.data.settings) - actual;
+  }
+
   // 1日の合計本数を午前/午後/夜の3つになるべく均等に振り分ける（余りは午前から順に+1）
   function distributeDailyTotal(dailyTotal) {
     const base = Math.floor(dailyTotal / 3);
@@ -378,20 +402,20 @@
       ? `<div class="interval-note">今日の平均間隔 ${formatInterval(todayGaps.reduce((a, b) => a + b, 0) / todayGaps.length)}</div>`
       : "";
 
-    // 現在の時間帯（午前/午後/夜）の消化状況
+    // 現在の時間帯（午前/午後/夜）の消化状況と、時間帯・日をまたいだ貯金残高
     const period = getCurrentPeriod(now);
     const periodCount = recordsInPeriod(now, period).length;
     const periodTarget = settings[period.settingsKey];
-    const periodRemaining = periodTarget - periodCount;
-    const periodOver = periodCount > periodTarget;
+    const bank = bankBalance(now);
+    const bankOver = bank < 0;
     const periodHtml = `
-      <div class="card period-card ${periodOver ? "over" : ""}">
+      <div class="card period-card ${bankOver ? "over" : ""}">
         <div class="period-row">
           <span class="period-label">${period.label}（${period.endHour}時まで）</span>
           <span class="period-count">${periodCount} / ${periodTarget}本</span>
         </div>
-        <div class="period-remaining ${periodOver ? "over" : ""}">
-          ${periodOver ? `⚠️ ${period.endHour}時までに +${periodCount - periodTarget}本 超過` : `${period.endHour}時まで残り ${periodRemaining}本`}
+        <div class="period-remaining ${bankOver ? "over" : ""}">
+          ${bankOver ? `⚠️ 貯金 ${bank}本（${Math.abs(bank)}本使いすぎ）` : `貯金 +${bank}本（${period.endHour}時まで残りとして使えます）`}
         </div>
       </div>
     `;
