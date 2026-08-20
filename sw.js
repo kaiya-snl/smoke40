@@ -3,7 +3,7 @@
    オフラインでも起動できるよう、アプリ本体一式をキャッシュする
    ========================================================== */
 
-const CACHE_NAME = "smoke40-cache-v9";
+const CACHE_NAME = "smoke40-cache-v10";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -35,11 +35,15 @@ self.addEventListener("activate", (event) => {
 
 // ネットワーク優先: オンライン時は常に最新を取得し、取得できた分だけキャッシュを更新する。
 // オフライン時のみキャッシュへフォールバックする（cache-firstだと更新後も古い画面が残り続けるため）。
+// GitHub PagesはJS/CSS等にCache-Control: max-age=600を付けてくるため、素のfetchだと
+// ブラウザのHTTPキャッシュ側で先に古い応答が返ってしまうことがある。cache: "no-store"で
+// そのレイヤーも明示的にバイパスし、確実に最新を取得する。
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
+  const freshRequest = new Request(event.request, { cache: "no-store" });
   event.respondWith(
-    fetch(event.request)
+    fetch(freshRequest)
       .then((response) => {
         if (response && response.ok) {
           const clone = response.clone();
